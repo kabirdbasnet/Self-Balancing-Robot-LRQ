@@ -1,6 +1,6 @@
 /*
  * @Description: In User Settings Edit
- * @Author: your name
+ * @Author: Kabir Basnet
  * @Date: 2019-10-08 09:35:07
  * @LastEditTime: 2019-10-11 16:25:04
  * @LastEditors: Please set LastEditors
