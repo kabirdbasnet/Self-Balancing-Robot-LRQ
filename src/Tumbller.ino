@@ -1,3 +1,6 @@
+
+
+
 /*
  * @Description: In User Settings Edit
  * @Author: your name
@@ -10,17 +13,21 @@
 #include "Pins.h"
 #include "mode.h"
 #include "Command.h"
-#include "BalanceCar.h"
-#include "Rgb.h"
-#include "Ultrasonic.h"
-#include "voltage.h"
+#include "Balance.h"
 #include "timers.h"
-
 unsigned long start_prev_time = 0;
 boolean carInitialize_en = true;
 
-
-
+void read_tilt_angle()
+{
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  kalmanfilter.Angle(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);
+  kalmanfilter_angle = kalmanfilter.angle;
+  previous_pitch = pitch;
+  pitch = kalmanfilter_angle;
+  pitch_dot = (pitch - previous_pitch)*100;//100;
+  
+}
 void functionMode()
 {
   switch (function_mode)
@@ -30,15 +37,12 @@ void functionMode()
   case IRREMOTE:
     break;
   case OBSTACLE:
-    obstacleAvoidanceMode();
     break;
   case FOLLOW:
-    followMode();
     break;
   case BLUETOOTH:
     break;
   case FOLLOW2:
-    followMode2();
     break;
   default:
     break;
@@ -156,7 +160,6 @@ void setMotionState()
       if (balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
       {
         motion_mode = STANDBY;
-        rgb.lightOff();
       }
     }
     break;
@@ -168,13 +171,11 @@ void setMotionState()
         car_speed_integeral = 0;
         setting_car_speed = 0;
         motion_mode = STANDBY;
-        rgb.lightOff();
       }
       else
       {
         motion_mode = STOP;
         carStop();
-        rgb.brightRedColor();
       }
     }
     break;
@@ -192,75 +193,29 @@ void keyEventHandle()
     switch (key_value)
     {
     case 's':
-      rgb.lightOff();
       motion_mode = STANDBY;
       break;
     case 'f':
-      rgb.flashBlueColorFront();
       motion_mode = FORWARD;
       break;
     case 'b':
-      rgb.flashBlueColorback();
       motion_mode = BACKWARD;
       break;
     case 'l':
-      rgb.flashBlueColorLeft();
       motion_mode = TURNLEFT;
       break;
     case 'i':
-      rgb.flashBlueColorRight();
       motion_mode = TURNRIGHT;
       break;
     case '1':
       function_mode = FOLLOW;
-      follow_flag = 0;
-      follow_prev_time = millis();
       break;
     case '2':
       function_mode = OBSTACLE;
-      obstacle_avoidance_flag = 0;
-      obstacle_avoidance_prev_time = millis();
       break;
     case '3':
     rgb_loop:
       key_value = '\0';
-      rgb.flag++;
-      if (rgb.flag > 6)
-      {
-        rgb.flag = 1;
-      }
-      switch (rgb.flag)
-      {
-      case 0:
-        break;
-      case 1:
-        if (rgb.theaterChaseRainbow(50) && key_value == '3')
-          goto rgb_loop;
-        break;
-      case 2:
-        if (rgb.rainbowCycle(20) && key_value == '3')
-          goto rgb_loop;
-        break;
-      case 3:
-        if (rgb.theaterChase(127, 127, 127, 50) && key_value == '3')
-          goto rgb_loop;
-        break;
-      case 4:
-        if (rgb.rainbow(20) && key_value == '3')
-          goto rgb_loop;
-        break;
-      case 5:
-        if (rgb.whiteOverRainbow(20, 30, 4) && key_value == '3')
-          goto rgb_loop;
-        break;
-      case 6:
-        if (rgb.rainbowFade2White(3, 50, 50) && key_value == '3')
-          goto rgb_loop;
-        break;
-        break;
-      default:
-        break;
-      }
       break;
     case '4':
       function_mode = IDLE;
@@ -269,7 +224,6 @@ void keyEventHandle()
       delay((kalmanfilter_angle - 30) * (kalmanfilter_angle - 30) / 8);
       carStop();
       start_prev_time = millis();
-      rgb.brightRedColor();
       break;
     case '5':
       if (millis() - start_prev_time > 500 && kalmanfilter_angle >= balance_angle_min)
@@ -280,39 +234,15 @@ void keyEventHandle()
       motion_mode = START;
       break;
     case '6':
-      rgb.brightness = 50;
-      rgb.setBrightness(rgb.brightness);
-      rgb.show();
       break;
     case '7':
-      rgb.brightRedColor();
-      rgb.brightness -= 25;
-      if (rgb.brightness <= 0)
-      {
-        rgb.brightness = 0;
-      }
-      rgb.setBrightness(rgb.brightness);
-      rgb.show();
       break;
     case '8':
-      rgb.brightRedColor();
-      rgb.brightness += 25;
-      if (rgb.brightness >= 255)
-      {
-        rgb.brightness = 255;
-      }
-      rgb.setBrightness(rgb.brightness);
-      rgb.show();
       break;
     case '9':
-      rgb.brightness = 0;
-      rgb.setBrightness(rgb.brightness);
-      rgb.show();
       break;
     case '0':
       function_mode = FOLLOW2;
-      follow_flag = 0;
-      follow_prev_time = millis();
       break;
     case '*':
       break;
@@ -331,45 +261,28 @@ void keyEventHandle()
 void setup()
 {
 
-  Serial.begin(9600);
-  ultrasonicInit();
-  keyInit();
-  rgb.initialize();
-  voltageInit();
+   Serial.begin(9600);
+  // ultrasonicInit();
+   keyInit();
+
+  // rgb.initialize();
+  encoder_config();
   start_prev_time = millis();
-  //encoder initialization for LQR
-  // encoder_config();
-  //time initialization for LQR
-  // timer1_init();
-	// timer5_init();
-	// start_timer1();
-	// start_timer5();
-
   carInitialize();
-  pinMode(AIN1, OUTPUT);
-  pinMode(BIN1, OUTPUT);
-  pinMode(PWMA_LEFT, OUTPUT);
-  pinMode(PWMB_RIGHT, OUTPUT);
-  pinMode(STBY_PIN, OUTPUT);
-
-  digitalWrite(STBY_PIN, HIGH);
+  set_mpu_offset();
+  carStop();
 }
 void loop()
 {
-   getKeyValue();
-   getBluetoothData();
-   keyEventHandle();
-   getDistance();
-   voltageMeasure();
-   setMotionState();
-   functionMode();
-   checkObstacle();
-   rgb.blink(100);
+  getKeyValue();
+  getBluetoothData();
+  keyEventHandle();
+  setMotionState();
+  functionMode();
   static unsigned long print_time;
   if (millis() - print_time > 100)
   {
     print_time = millis();
-    Serial.println(kalmanfilter.angle);
   }
   static unsigned long start_time;
   if (millis() - start_time < 10)
