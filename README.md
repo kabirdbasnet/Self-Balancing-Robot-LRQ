@@ -9,3 +9,7 @@ A two-wheel self-balancing robot which uses LRQ model and is capable of autonomo
 
 [<img src="https://i.imgur.com/T3yy7Sq.png" width="650" height="450" />](https://www.youtube.com/watch?v=zpIfSJJgg_g)
 
+### Delivery demo
+[<img src="https://i.imgur.com/Bhpgyoh.png" width="650" height="450" />](https://www.youtube.com/watch?v=JMVLNMsoCcU)
+
+
