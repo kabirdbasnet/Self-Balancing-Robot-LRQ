@@ -3,4 +3,4 @@ A two-wheel self-balancing robot which uses LRQ model and is capable of autonomo
 ## Demo:
 ### Balancing demo
 
-[![Watch the video](https://i.imgur.com/5qC2Jh9.png)](https://www.youtube.com/watch?v=iqXPmz6Rj_U)
+[![Watch the video](https://i.imgur.com/uxMcaOL.png)](https://www.youtube.com/watch?v=iqXPmz6Rj_U)
