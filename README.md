@@ -1,5 +1,5 @@
 # Self-Balancing-Delivery-Robot-LRQ
-[<img src="https://i.imgur.com/rAdH2ij.png" width="850" height="600" />]
+[<img src="https://i.imgur.com/rAdH2ij.png" width="650" height="450" />]
 
 A two-wheel self-balancing robot which uses LRQ model and is capable of autonomously navigating and delivering small objects. The control system that was used on this robot was Linear Quadratic Regulator for balancing and position holding of the robot. For track traversal and navigation, a PID controller.
 ## Demo:
