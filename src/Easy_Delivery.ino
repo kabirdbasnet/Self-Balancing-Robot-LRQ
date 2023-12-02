@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
@@ -5,8 +6,7 @@
 #include "MsTimer2.h"
 #include <QTRSensors.h>
 #include <SPI.h>
-#include <Servo.h>
-
+//external library just used for obtaining the IMU data for the accelerometer and the gyroscope data.
 
 #define LED 13
 #define PWM_R 5
@@ -25,12 +25,27 @@
 #define SERVO1_PIN 9
 #define SERVO2_PIN 6
 
-Servo servo1;
 //Delivery
 int servo_i = 0;
+int grabbing_servo_i = 0;
 int delayTime = 15;
+int turnDelay = 9000;
 unsigned long previousMillis = 0;
+unsigned long waitStartMillis = 0;
+const unsigned long waitDuration = 5000; // 3 seconds wait
+const int minPulseWidth = 1000; // Minimum pulse width for 0 degrees
+const int maxPulseWidth = 2000; // Maximum pulse width for 180 degrees
+bool start_distance = false;
+const long interval = 10000;  
 
+enum ServoState {
+  LOWERING,
+  WAITING,
+  GRABBING,
+  RAISING
+};
+
+ServoState servoState = LOWERING;
 //State machine to handle the robot functionality
 enum State {
     IDLE,
@@ -39,19 +54,13 @@ enum State {
     DELIVERY
 };
 
-enum ServoState {
-  INWARD,
-  OUTWARD
-};
-
-ServoState servoState = INWARD;
 State currentState = IDLE;
 
 //Robot Rotation Initialization
 bool rotationStarted = false;
 bool isRotating = false;
 unsigned long rotateStartTime;
-unsigned long rotateDuration = 3000; // Duration of rotation in milliseconds
+unsigned long rotateDuration = 3400; // Duration of rotation in milliseconds
 
 //Navigation Initialization
 
@@ -76,20 +85,17 @@ int16_t position;
 // MUX control pins
 const int S0 = 12;
 const int S1 = 11;
-const int S2 = 9;
-const int S3 = 6;
+const int S2 = 1;
+const int S3 = 0;
 // MUX SIG and EN pins
 const int muxSIG = A7; // Connected to D3
 const int muxEN = 13;  // Connected to D2
 //-------------------------------------
 
-
 MPU6050 mpu;            // AD0 low = 0x68
 
-
-
 bool isBalanced;
-bool isNavigationEnabled = true;
+bool isNavigationEnabled = false;
 // MPU control/status vars
 bool dmpReady = false;  // set true if DMP init was successful
 uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
@@ -111,7 +117,7 @@ double position_add,position_dot;
 double position_dot_filter;
 int speed_real_l,speed_real_r;
 int pwm,pwm_l,pwm_r;
-int Turn_Need,Speed_Need;
+int Speed_Need;
 
 //turning and navigation purposes
 int right_wheel_offset;
@@ -119,7 +125,6 @@ int left_wheel_offset;
 //filtered angle
 float angle, angular_rate;
 bool blinkState = false;
-int rx_count=0;
 byte buf_tmp=0;
 
 uint8_t i2cData[14]; // Buffer for I2C data
@@ -209,44 +214,29 @@ void left360(int speed)
   right_wheel_offset = speed;
   left_wheel_offset = -speed;
 }
-
-void rightTurn(int speed)
-{
-    right_wheel_offset = -speed;
-    
-}
-
-void leftTurn(int speed)
-{
-    left_wheel_offset = -speed;
-}
-
-void forward(int speed)
-{
-  Speed_Need = -speed;
-}
-
-void backward(int speed)
-{
-  Speed_Need = speed;
-}
-
+ 
 void setMuxChannel(uint8_t channel) {
     digitalWrite(S0, bitRead(channel, 0));
     digitalWrite(S1, bitRead(channel, 1));
     digitalWrite(S2, bitRead(channel, 2));
     digitalWrite(S3, bitRead(channel, 3));
 }
-
+int distance = 100;
+void getObjectDistance()
+{
+  float volts = analogRead(A6)*0.0048828125;  // value from sensor * (5/1024)
+  distance = 13*pow(volts, -1); // worked out from datasheet graph
+}
 //The ir sensor data obtained.
+int irIndex = 8;
 void getPositionData()
 {
   for (uint8_t sensorIndex = 0; sensorIndex < SensorCount; sensorIndex++) {
         // Set MUX channel
-        setMuxChannel(sensorIndex);
-        
+        setMuxChannel(irIndex);
         // Read the sensor value
         sensorValues[sensorIndex] = analogRead(muxSIG);
+        irIndex++;
     }
     bool allSensorEnabled = true;
    if ((sensorValues[0] < 250) || 
@@ -257,18 +247,14 @@ void getPositionData()
     (sensorValues[5] < 250) || 
     (sensorValues[6] < 250) || 
     (sensorValues[7] < 250)) {
-    allSensorEnabled = false;
+    //allSensorEnabled = false;
 }
-    if(allSensorEnabled)
+    if(distance == 5)
     {
       stopNavigation = true;
     }
   // the robot's current position is stored in this variable
     position = qtr.readLineBlack(sensorValues);
-
-    //Print the position
-    Serial.print("Line Position: ");
-    Serial.print(position);
 }
 
 void start360Rotation() {
@@ -291,11 +277,8 @@ void checkRotationCompletion() {
 
 void calculateMotorOffsets()
 {
-
   Speed_Need = -4;
   int error = position - 3400;
-  Serial.print(" error: ");
-  Serial.print(error);
   P = error;
   I = I + error;
   D = error - lastError;
@@ -325,52 +308,67 @@ void navigationControl()
   }
 }
 
-const int minPulseWidth = 1000; // Minimum pulse width for 0 degrees
-const int maxPulseWidth = 2000; // Maximum pulse width for 180 degrees
-
-void moveServos(int angle) {
+void moveLoweringServos(int angle) {
   int pulseWidth = map(angle, 0, 180, minPulseWidth, maxPulseWidth);
-  digitalWrite(SERVO1_PIN, HIGH);
   digitalWrite(SERVO2_PIN, HIGH);
   delayMicroseconds(pulseWidth);
-  digitalWrite(SERVO1_PIN, LOW);
-   digitalWrite(SERVO2_PIN, LOW);
+  digitalWrite(SERVO2_PIN, LOW);
 }
 
-
+void moveGrabbingServos(int angle) {
+  int pulseWidth = map(angle, 0, 180, minPulseWidth, maxPulseWidth);
+  digitalWrite(SERVO1_PIN, HIGH);
+  delayMicroseconds(pulseWidth);
+  digitalWrite(SERVO1_PIN, LOW);
+}
 
 void armMovement()
 {
   unsigned long currentMillis = millis();
 
   switch (servoState) {
-    case INWARD:
+    case LOWERING:
       if (servo_i < 180) {
         if (currentMillis - previousMillis >= delayTime) {
-          moveServos(servo_i);
+          moveLoweringServos(servo_i);
           servo_i++;
           previousMillis = currentMillis;
         }
       } else {
-        servoState = OUTWARD;
-        servo_i = 180; // Reset i for the outward motion
+        servoState = WAITING;
+        waitStartMillis = currentMillis;
       }
       break;
-    case OUTWARD:
+    case WAITING:
+      if (grabbing_servo_i < 40) {    
+        if (currentMillis - previousMillis >= delayTime) {
+          moveGrabbingServos(grabbing_servo_i);
+          grabbing_servo_i++;
+          previousMillis = currentMillis;
+        } 
+      }
+      else {
+        servoState = GRABBING;
+      }
+      break;
+    case GRABBING:
+      servoState = RAISING;
+      servo_i = 179; // Start from 179 for raising
+      break;
+
+    case RAISING:
       if (servo_i > 0) {
         if (currentMillis - previousMillis >= delayTime) {
-          moveServos(servo_i);
+          moveLoweringServos(servo_i);
           servo_i--;
           previousMillis = currentMillis;
         }
       } else {
-        servoState = INWARD;
-        servo_i = 0; // Reset i for the inward motion
+        //servoState = LOWERING; // To enable delivery again for your motor.
       }
       break;
   }
 }
-
 
 void setup()
 {  
@@ -379,11 +377,11 @@ void setup()
 
   Wire.begin();
   TWBR = 24; 
+  // Turn on serial begin for navigation and for print statements.
   //Serial.begin(115200);
   initializeNavigation();
   pinMode(SERVO1_PIN, OUTPUT);
   pinMode(SERVO2_PIN, OUTPUT);
-  //servo1.attach(9);
   // initialize device
   Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
@@ -425,7 +423,6 @@ void setup()
   }
   else
   {
-
     Serial.print(F("DMP Initialization failed (code "));
     Serial.print(devStatus);
     Serial.println(F(")"));
@@ -436,7 +433,6 @@ void setup()
 
 void loop()
 {
-
   //if programming failed, don't try to do anything
   if (!dmpReady) return;
   mpuInterrupt = false;
@@ -465,46 +461,51 @@ void loop()
     mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
     
     // angle and angular rate unit: radian
-//    angle_X = ypr[2] + 0;                  // 0.017 is center of gravity offset
-//    angular_rate_X = -((double)gyro[0]/131.0); // converted to radian
     angle = ypr[1] + 0.07;                   // 0.02 is center of gravity offset
     angular_rate = -((double)gyro[1]/131.0); // converted to radian
 
     isBalanced = ((angle < 0.15) &&(angle > -0.10)) ? true : false;
+    unsigned long distanceMillis = millis();
+    if (distanceMillis - previousMillis >= interval) {
+    // save the last time the wait was updated
+    previousMillis = distanceMillis;
+    // your code here, e.g., toggling an LED
+    start_distance = true;
+  }
+  if(start_distance)
+  {
+    getObjectDistance();
+  }
 
-    //Serial.print(" angle: ");
-    //Serial.print(angular_rate);
-    //Serial.print("\t");
-    //if(isBalanced) {
-          switch (currentState) {
-              case IDLE:
-                  right_wheel_offset = 0;
-                  left_wheel_offset = 0;
-                  Speed_Need = 0;
-                  if(isNavigationEnabled)
-                    currentState = DELIVERY;
-                  break;
-              case NAVIGATION:
-                  navigationControl();
-                  if(!isNavigationEnabled)
-                    currentState = PICKUP;
-                  break;
-              case PICKUP:
-                  //isNavigationEnabled = false;
-                  if(!rotationStarted)
-                    start360Rotation();
-                  checkRotationCompletion();
-                  if(!isRotating)
-                    currentState = IDLE;
-                  break;
-              case DELIVERY:
-                  armMovement();
-                  break;
+  unsigned long currentMillis = millis();
+  if(isBalanced) {
+    switch (currentState) {
+      case IDLE:
+        right_wheel_offset = 0;
+        left_wheel_offset = 0;
+        Speed_Need = 0;             
+        if(isNavigationEnabled ){
+          currentState = NAVIGATION;
+        }
+        break;
+        case NAVIGATION:
+          navigationControl();
+          if(!isNavigationEnabled)
+            currentState = PICKUP;
+          break;
+        case PICKUP:
+          isNavigationEnabled = false;
+          if(!rotationStarted)
+            start360Rotation();
+            checkRotationCompletion();
+            if(!isRotating)
+              currentState = IDLE;
+        break;
+        case DELIVERY:
+          armMovement();
+            break;
           }
-      //}
-    Serial.println();
-    
-    control();
+      }
     PWM_calculate();
  } 
 }
@@ -538,16 +539,6 @@ void init_cal()
   K_position_dot = 1.09 * 20.9;	
 }
 
-void control()
-{
-  if(++rx_count > 200)
-  {
-    rx_count = 0;
-    Speed_Need = 0;
-    Turn_Need = 0;
-  }
-}
-
 void PWM_calculate(void)	
 {
 
@@ -568,16 +559,17 @@ void PWM_calculate(void)
     position_add=-10000;
   else if(position_add>10000)
     position_add=10000;
-
+  //LQR State Space Represenstation and the pwm being generated for the motors for balance.
   //pwm being used for the motor speed
   pwm = K_angle * angle * K_angle_AD
       + K_angle_dot * angular_rate * K_angle_dot_AD
       + K_position * position_add * K_position_AD
       + K_position_dot * position_dot_filter * K_position_dot_AD;
-  // Serial.print(" K_position: ");
-     Serial.print(position_add);
+  //right wheel offsets and left wheel offsets allow for turn control of the robot
   pwm_r = pwm - right_wheel_offset; // negative makes right wheels forwards and vice versa
   pwm_l = pwm - left_wheel_offset;      //negative makes left wheels forward and vice versa
+  //Ensuring that minimal pwm is supplied to the robot to preserve battery and prevent overshoot.
+  //Robots motor is synchronized by using different values for left and right pwm.
   pwm_out(pwm_l*0.205,pwm_r*0.245); //higher values makes position hold better  each wheel.
   speed_real_l = 0;
   speed_real_r = 0;
